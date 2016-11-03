@@ -1,6 +1,6 @@
 #gremlin
     实现以tinkerGraph为主要参考依据
-##graph Structure
+##graph Class
     所有数据的起点, 操作节点和边, 直接相关的结构为GraphTraversalSource，含有addVertex/vertices等方法，但是不由自身进行调用(由traversal进行调用)。
     properties:
         Map<Object, Vertex> vertices    //with all vertices
@@ -12,7 +12,7 @@
         根据参数制作一个vertex，将vertex.id和vertex写如vertices中。
     Iterator<Vertex> vertices(final Object... vertexIds)
         V()操作具体的函数，从map中使用lambda表达式获取到。edge同理.
-###GraphTraversalSource Structure(g=graph.traversal())
+###GraphTraversalSource Class(g=graph.traversal())
     traversal()返回的是GraphTraversalSource，有addV/addE/V/E等起始函数(因为所有操作必须从这些起始函数开始)，由返回的traversal进行之后的操作。
     functions:
     GraphTraversal<Vertex, Vertex> V(final Object... vertexIds) {
@@ -23,7 +23,7 @@
         //add the step into traversal and return
         return traversal.addStep(new GraphStep<>(traversal, Vertex.class, true, vertexIds));
     }
-##GraphTraversal<S, E> Structure (return structure of traversal functions(addV(),V(),out() etc.))
+##GraphTraversal<S, E> Class (return structure of traversal functions(addV(),V(),out() etc.))
     构造时S表示初始输入类型，E表示输出类型，用于控制起点和终点的类型。
     GraphTraversal包含多个函数，has/out/valueMap等，所有函数执行逻辑都是将对应的step加入到List<Step> steps中。
     同时它也会执行step并获取数据，执行主要是生成step的traverser。
@@ -69,8 +69,9 @@
         }
         return collection;
     }
-###Step<S, E> Structure
+###Step<S, E> Class
     有很多子类，每个子类代表一种操作(如V/addV/has等)，每个子类会有自己的属性，所有step共用next函数，同时实现自己的processNextStart函数。
+
     functions:
     //generate traverser by processNextStart and end while(true) by interrupt or send the result to next step
     Traverser.Admin<E> next() {
@@ -99,7 +100,7 @@
             }
         }
     }
-###Traverser<T> Structure
+###Traverser<T> Class
     唯一作用是保存数据，如V()，则保存Iterator<Vertex>。
     property:
     T t;
@@ -113,121 +114,120 @@
 
     //execute vertexProgram
     Future<ComputerResult> submit() {
-        //get the result graph and persist state to use for the computation
-        this.resultGraph = GraphComputerHelper.getResultGraphState(Optional.ofNullable(this.vertexProgram), Optional.ofNullable(this.resultGraph));
-        this.persist = GraphComputerHelper.getPersistState(Optional.ofNullable(this.vertexProgram), Optional.ofNullable(this.persist));
-
         //initialize the memory
         this.memory = new TinkerMemory(this.vertexProgram, this.mapReducers);
         return computerService.submit(() -> {
             final TinkerGraphComputerView view;
-            view = TinkerHelper.createGraphComputerView(this.graph, this.graphFilter, this.vertexProgram.getVertexComputeKeys());
             //execute the vertex program
-            this.vertexProgram.setup(this.memory);
             while (true) {
-                this.memory.completeSubRound();
                 //get all the vertices from graph!
                 final SynchronizedIterator<Vertex> vertices = new SynchronizedIterator<>(this.graph.vertices());
-                vertexProgram.workerIterationStart(this.memory.asImmutable());
                 while (true) {
                     final Vertex vertex = vertices.next();
                     if (null == vertex) break;
                     vertexProgram.execute(
-                        ComputerGraph.vertexProgram(vertex, vertexProgram),
-                        new TinkerMessenger<>(vertex, this.messageBoard, vertexProgram.getMessageCombiner()),
+                        //vertexProgram on one vertex
+                        vertex,
+                        //vertexProgram use message to send effect data
+                        new TinkerMessenger<>(vertex, this.messageBoard),
+                        //all the vertex in this memory
                         this.memory
                     );
                 }
-                this.memory.completeSubRound();
-                this.memory.incrIteration();
             }
-            view.complete(); // drop all transient vertex compute keys
-
-            
-            // update runtime and return the newly computed graph
-            this.memory.setRuntime(System.currentTimeMillis() - time);
-            this.memory.complete(); // drop all transient properties and set iteration
-            // determine the resultant graph based on the result graph/persist state
-            final Graph resultGraph = view.processResultGraphPersist(this.resultGraph, this.persist);
-            TinkerHelper.dropGraphComputerView(this.graph); // drop the view from the original source graph
             return new DefaultComputerResult(resultGraph, this.memory.asImmutable());
         });
     }
 ###VertexProgram<M>结构
-    VertexProgam会生成一个property附到vertex上，M表示此property的类型。
+    VertexProgam会生成一个property附到vertex上，M表示此property的类型。核心函数是execute，负责生成新property，以及将对其他节点影响的数据发送到共享队列中。
+
     functions:
-    void setup(final Memory memory)
-        ???
-
-    //execute example about ???, execute on vertex and effect other vertex by message then store result in memory
-
-    //generate Map<String, MemoryComputeKey> memoryKeys in TinkerMemory,  key is string "a" as column name
-    Set<MemoryComputeKey> getMemoryComputeKeys() {
-        return new HashSet<>(Arrays.asList(
-                MemoryComputeKey.of("a", Operator.sum),
-                MemoryComputeKey.of("b", Operator.sum)));
-    }
-
-    //
-    boolean terminate(final Memory memory)
-###TinkerGraphComputerView
-
+    //execute example about PageRankVertexProgram, link is:
+    http://tinkerpop.apache.org/docs/current/reference/#pagerankvertexprogram
 ###TinkerMemory structure
-    用于存储computer获得的数据
-
-###MapReduce
-    作用是对数据进行分组，包含在compute操作中，核心函数为submit。
+    用于存储computer获得的数据，主要结构为Map<String, Object> currentMap，key为VertexProgram的标识，value为？？？ 
+###MapReduceProgram
+    作用是对数据进行分组，是compute操作的一种，核心函数同样为submit。
 
     functions:
-    //execute vertexProgram
+    //execute MapReduce
     Future<ComputerResult> submit() {
-        GraphComputerHelper.validateProgramOnComputer(this, this.vertexProgram);
         this.mapReducers.addAll(this.vertexProgram.getMapReducers());
         //initialize the memory
         this.memory = new TinkerMemory(this.vertexProgram, this.mapReducers);
         return computerService.submit(() -> {
-            view = TinkerHelper.createGraphComputerView(this.graph, this.graphFilter, Collections.emptySet());
-
             // execute mapreduce jobs
             for (final MapReduce mapReduce : mapReducers) {
-                final TinkerMapEmitter<?, ?> mapEmitter = new TinkerMapEmitter<>(mapReduce.doStage(MapReduce.Stage.REDUCE));
+                final TinkerMapEmitter<?, ?> mapEmitter = new TinkerMapEmitter<>();
                 final SynchronizedIterator<Vertex> vertices = new SynchronizedIterator<>(this.graph.vertices());
-                workers.setMapReduce(mapReduce);
-                workers.executeMapReduce(workerMapReduce -> {
-                    workerMapReduce.workerStart(MapReduce.Stage.MAP);
-                    while (true) {
-                        if (Thread.interrupted()) throw new TraversalInterruptedException();
-                        final Vertex vertex = vertices.next();
-                        if (null == vertex) break;
-                        workerMapReduce.map(ComputerGraph.mapReduce(vertex), mapEmitter);
-                    }
-                    workerMapReduce.workerEnd(MapReduce.Stage.MAP);
-                });
-                // sort results if a map output sort is defined
+                while (true) {
+                    final Vertex vertex = vertices.next();
+                    if (null == vertex) break;
+                    //different mapReduce has different map function
+                    mapReduce.map(ComputerGraph.mapReduce(vertex), mapEmitter);
+                }
+                // sort results
                 mapEmitter.complete(mapReduce);
 
-                // no need to run combiners as this is single machine
-                if (mapReduce.doStage(MapReduce.Stage.REDUCE)) {
-                    final TinkerReduceEmitter<?, ?> reduceEmitter = new TinkerReduceEmitter<>();
-                    final SynchronizedIterator<Map.Entry<?, Queue<?>>> keyValues = new SynchronizedIterator((Iterator) mapEmitter.reduceMap.entrySet().iterator());
-                    workers.executeMapReduce(workerMapReduce -> {
-                        workerMapReduce.workerStart(MapReduce.Stage.REDUCE);
-                        while (true) {
-                            if (Thread.interrupted()) throw new TraversalInterruptedException();
-                            final Map.Entry<?, Queue<?>> entry = keyValues.next();
-                            if (null == entry) break;
-                            workerMapReduce.reduce(entry.getKey(), entry.getValue().iterator(), reduceEmitter);
-                        }
-                        workerMapReduce.workerEnd(MapReduce.Stage.REDUCE);
-                    });
-                    reduceEmitter.complete(mapReduce); // sort results if a reduce output sort is defined
-                    mapReduce.addResultToMemory(this.memory, reduceEmitter.reduceQueue.iterator());
-                } else {
-                    mapReduce.addResultToMemory(this.memory, mapEmitter.mapQueue.iterator());
-                }
+                final TinkerReduceEmitter<?, ?> reduceEmitter = new TinkerReduceEmitter<>();
+                //get key/Values by map result
+                final Map.Entry<?, Queue<?>> keyValues = new  mapEmitter.reduceMap.entrySet().iterator();
+                workers.executeMapReduce(workerMapReduce -> {
+                    while (true) {
+                        final Map.Entry<?, Queue<?>> entry = keyValues.next();
+                        if (null == entry) break;
+                        workerMapReduce.reduce(entry.getKey(), entry.getValue().iterator(), reduceEmitter);
+                    }
+                });
+                //sort results
+                reduceEmitter.complete(mapReduce); 
+                //store reduce result into memory
+                mapReduce.addResultToMemory(this.memory, reduceEmitter.reduceQueue.iterator());
             }
         }
     }
+###MapReduce<MK, MV, RK, RV, R> Class
+    用于自定义Mapreduce函数，将数据根据key归类并对每一类执行reduce，最后通过generateFinalResult将最后结果放入memory中。MK和MV为Map函数生成的类型，RK和RV为reduce生成的类型，R为最后返回的类型
+    functions：
+    //void map(final Vertex vertex, final MapEmitter<MK, MV> emitter)
+    void void map(final Vertex vertex, final MapEmitter<Integer, Integer> emitter) {
+        //get iterator with same age
+        vertex.<Integer>property("age").ifPresent(age -> emitter.emit(age, age));
+    }
+    //void reduce(final MK key, final Iterator<MV> values, final ReduceEmitter<RK, RV> emitter)
+    void reduce(Integer key, Iterator<Integer> values, ReduceEmitter<Integer, Integer> emitter) {
+        values.forEachRemaining(i -> emitter.emit(i, 1));
+    }
+    //get the 
+    public Integer generateFinalResult(final Iterator<KeyValue<NullObject, Integer>> keyValues) {
+        return keyValues.next().getValue();
+    }
+    //add the result into memory like K/V pair <programKey, R>
+    void addResultToMemory(final Memory.Admin memory, final Iterator<KeyValue<RK, RV>> keyValues) {
+        memory.set(this.getMemoryKey(), this.generateFinalResult(keyValues));
+    }
+###TinkerMapEmitter<K,V>
+    用于保存mapreduce中map生成的数据，以及负责将发送过来的K/V数据进行保存。
+
+    property：
+    Map<K, Queue<V>> reduceMap; //store map result with reduce
+    Queue<KeyValue<K, V>> mapQueue; //store map result without reduce
+    functions:
+    //put the key and value into reduceMap/mapQueue
+    emit(K key, V value)
+    //sort the map result to reduce step 
+    complete(final MapReduce<K, V, ?, ?, ?> mapReduce)
+###TinkerReduceEmitter<OK, OV>
+    同TinkerMapEmitter，用于保存reduce产生的数据
+
+    property:
+    Queue<KeyValue<OK, OV>> reduceQueue //store reduce result
+    functions:
+    //add result into queue
+    emit(final OK key, final OV value)
+    //sort reduce result
+    complete(final MapReduce<?, ?, OK, OV, ?> mapReduce)
+
 ##traversal流程(V()/out()等)
     GraphTraversal.Admin<Vertex, Vertex> traversal = new DefaultGraphTraversal<>(clone);
     生成一个traversal，可以执行addstep和iterate，包含属性List<Step> steps，记录所有需要执行的step，记录作为path的来源
