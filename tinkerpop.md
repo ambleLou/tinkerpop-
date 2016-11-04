@@ -145,7 +145,8 @@
     //execute example about PageRankVertexProgram, link is:
     http://tinkerpop.apache.org/docs/current/reference/#pagerankvertexprogram
 ###TinkerMemory structure
-    用于存储computer获得的数据，主要结构为Map<String, Object> currentMap，key为VertexProgram的标识，value为？？？ 
+    用于存储computer获得的数据，主要结构为Map<String, Object> currentMap，key为VertexProgram的标识，value可以为任意类型，由vertexProgram和MapReduce返回的数据。最后获取数据的方式如下：
+    Object result = results.memory().get("KeyName");
 ###MapReduceProgram
     作用是对数据进行分组，是compute操作的一种，核心函数同样为submit。
 
@@ -202,7 +203,7 @@
     public Integer generateFinalResult(final Iterator<KeyValue<NullObject, Integer>> keyValues) {
         return keyValues.next().getValue();
     }
-    //add the result into memory like K/V pair <programKey, R>
+    //add the result into memory like K/V pair <programKey, R>, R is iterator.next()
     void addResultToMemory(final Memory.Admin memory, final Iterator<KeyValue<RK, RV>> keyValues) {
         memory.set(this.getMemoryKey(), this.generateFinalResult(keyValues));
     }
@@ -227,83 +228,3 @@
     emit(final OK key, final OV value)
     //sort reduce result
     complete(final MapReduce<?, ?, OK, OV, ?> mapReduce)
-
-##traversal流程(V()/out()等)
-    GraphTraversal.Admin<Vertex, Vertex> traversal = new DefaultGraphTraversal<>(clone);
-    生成一个traversal，可以执行addstep和iterate，包含属性List<Step> steps，记录所有需要执行的step，记录作为path的来源
-    
-    return traversal.addStep(new GraphStep<>(traversal, Vertex.class, true, vertexIds));
-    添加GraphStep，并执行获取V或者E，使用的函数是graph.vertices(ids)/graph.edges(ids),获取的结果存放在iteratorSupplier中
-
-    返回traversal，数据存放在调用者(graph)的Map<Object, Vertex> vertices中
-    是一个hashmap，把id作为key，整个vertex作为value，如果不建立索引则会影响搜索速度。
-###g.addV()流程(addE类推)
-    GraphTraversal.Admin<Vertex, Vertex> traversal = new DefaultGraphTraversal<>(clone);
-    同上。
-    
-    traversal.addStep(new AddVertexStartStep(traversal, label));
-    添加AddVertexStartStep，数据存入parameters中
-##Step结构(每一种traversal都有对应的step)
-###GraphStep<>: 处理V()/E()
-    GraphStep(final Traversal.Admin traversal, final Class<E> returnClass, final boolean isStart, final Object... ids)
-    traversal：执行者 returnClass：返回类型 isStart：是否traversal中第一个step ids：查找的key
-
-    Traverser.Admin<E> processNextStart() {
-        while (true) {
-            if (this.iterator.hasNext()) {
-                return this.isStart ? this.getTraversal().getTraverserGenerator().generate(this.iterator.next(), (Step) this, 1l) : this.head.split(this.iterator.next(), this);
-            } else {
-                if (this.isStart) {
-                    if (this.done)
-                        throw FastNoSuchElementException.instance();
-                    else {
-                        this.done = true;
-                        this.iterator = null == this.iteratorSupplier ? EmptyIterator.instance() : this.iteratorSupplier.get();
-                    }
-                } else {
-                    this.head = this.starts.next();
-                    this.iterator = null == this.iteratorSupplier ? EmptyIterator.instance() : this.iteratorSupplier.get();
-                }
-            }
-        }
-    }
-###AddVertexStartStep：处理addV()/addE()
-    this.parameters.set(keyValues);
-    this.parameters.integrateTraversals(this);
-    数据添加到parameters中
-
-    Traverser.Admin<Vertex> processNextStart(){
-        //获取key/value依次数据，通过graph.addVertex()进行添加
-        this.getTraversal().getGraph().get().addVertex(this.parameters.getKeyValues(EmptyTraverser.instance()));
-        //？？？
-        getTraversal().getTraverserGenerator().generate(vertex, this, 1l);
-    }
-    最后执行traversal链时，执行具体操作。
-    
-###TraversalStrategy
-    ？？？
-##Tests
-###get_g_V_outXknowsX_V_name
-    //生成traversal，将step加入steps
-    Traversal<Vertex, String> traversal = g.V().out("knows").V().values("name");
-    //具体执行steps，结果写入list中
-    List<T> results = traversal.toList();
-    
-    List<E> toList() {
-        return this.fill(new ArrayList<>());
-    }
-    
-    <C extends Collection<E>> C fill(final C collection) {
-        try {
-            if (!this.asAdmin().isLocked()) this.asAdmin().applyStrategies();
-            // use the end step so the results are bulked
-            final Step<?, E> endStep = this.asAdmin().getEndStep();
-            while (true) {
-                final Traverser<E> traverser = endStep.next();
-                TraversalHelper.addToCollection(collection, traverser.get(), traverser.bulk());
-            }
-        } catch (final NoSuchElementException ignored) {
-        }
-        return collection;
-    }
-
